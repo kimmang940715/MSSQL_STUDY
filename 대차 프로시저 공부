@@ -1,0 +1,91 @@
+1. 대차 할당 및 적재 프로시저 (Cart Assignment / Load)
+작업자가 빈 카트에 물건을 싣고 바코드나 QR을 찍었을 때 실행되는 프로시저입니다. 카트 상태를 '사용 중'으로 바꾸고, 어떤 작업 지시(또는 물품)와 연결되었는지 기록합니다.
+
+SQL
+CREATE PROCEDURE usp_AssignCartToWork
+    @CartID VARCHAR(20),      -- 카트 바코드 번호
+    @WorkOrderID VARCHAR(50), -- 실은 물건의 작업지시번호 (또는 Lot 번호)
+    @WorkerID INT             -- 작업자 사번
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRAN;
+
+    BEGIN TRY
+        DECLARE @CartStatus VARCHAR(20);
+
+        -- 1. 카트가 현재 '비어있음(Empty)' 상태인지 확인 (동시에 다른 사람이 잡지 못하게 잠금)
+        SELECT @CartStatus = Status
+        FROM Carts WITH (UPDLOCK)
+        WHERE CartID = @CartID;
+
+        IF @CartStatus <> 'Empty'
+        BEGIN
+            ROLLBACK TRAN;
+            THROW 50002, '이미 사용 중이거나 점검 중인 대차입니다.', 1;
+            RETURN;
+        END
+
+        -- 2. 대차 마스터 테이블 업데이트 (상태 변경 및 작업번호 매핑)
+        UPDATE Carts
+        SET Status = 'Loaded',          -- 상태를 '적재됨'으로 변경
+            CurrentWorkOrder = @WorkOrderID, -- 어떤 물건이 실렸는지 기록
+            LastUpdated = GETDATE()
+        WHERE CartID = @CartID;
+
+        -- 3. 대차 이력(Log) 테이블에 기록 (언제, 누가, 어떤 물건을 실었는지 추적)
+        INSERT INTO CartHistory (CartID, WorkOrderID, WorkerID, ActionType, ActionTime)
+        VALUES (@CartID, @WorkOrderID, @WorkerID, 'LOAD', GETDATE());
+
+        COMMIT TRAN;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRAN;
+        THROW;
+    END CATCH
+END;
+------------------------------------------------------------------------------------------------------------------------------------------------
+2. 대차 반납 및 비움 프로시저 (Cart Release / Unload)
+목적지(다음 공정이나 창고)에 도착해서 물건을 다 내린 뒤, 카트를 다시 '빈 상태'로 되돌려 누구나 쓸 수 있게 만드는 프로시저입니다.
+
+SQL
+CREATE PROCEDURE usp_ReleaseCart
+    @CartID VARCHAR(20),
+    @LocationID VARCHAR(50) -- 카트를 비우고 놓아둔 현재 위치
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRAN;
+
+    BEGIN TRY
+        DECLARE @CurrentWorkOrder VARCHAR(50);
+
+        -- 1. 대차 정보 확인
+        SELECT @CurrentWorkOrder = CurrentWorkOrder
+        FROM Carts WITH (UPDLOCK)
+        WHERE CartID = @CartID;
+
+        -- 2. 카트 상태를 다시 'Empty'로 초기화하고 위치 업데이트
+        UPDATE Carts
+        SET Status = 'Empty',
+            CurrentWorkOrder = NULL, -- 실려있는 물건 정보 초기화
+            CurrentLocation = @LocationID, -- 현재 빈 카트가 있는 위치 갱신
+            LastUpdated = GETDATE()
+        WHERE CartID = @CartID;
+
+        -- 3. 이력 테이블에 '비움(UNLOAD)' 기록
+        INSERT INTO CartHistory (CartID, WorkOrderID, WorkerID, ActionType, ActionTime, LocationID)
+        VALUES (@CartID, @CurrentWorkOrder, NULL, 'UNLOAD', GETDATE(), @LocationID);
+
+        COMMIT TRAN;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRAN;
+        THROW;
+    END CATCH
+END;
+💡 물류 대차 시스템 개발 시 핵심 포인트
+
+속도와 동시성: 현장에서는 PDA나 바코드 스캐너로 0.1초 만에 삑-삑- 찍으면서 작업합니다. 찰나의 순간에 데이터가 꼬이지 않도록 WITH (UPDLOCK) 처리가 필수입니다.
+
+이력 추적 (History): "그 부품 어느 대차에 실려갔어?", "그 빈 대차 지금 어디에 방치되어 있어?" 같은 질문에 답하기 위해 CartHistory 같은 이력 테이블을 꼼꼼하게 남겨야 합니다.
