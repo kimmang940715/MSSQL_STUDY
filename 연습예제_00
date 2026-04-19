@@ -1,0 +1,75 @@
+실무에서 테스트용으로 가장 무난하게 활용할 수 있는 **'직원(Test_Employee)' 테이블**을 예시로 만들어 드리겠습니다. 
+
+이 예제에는 자동 증가 키(Identity), 한글 저장을 위한 유니코드 문자형(NVARCHAR), 날짜형(DATETIME), 그리고 기본값(Default) 설정 등 필수적인 요소들이 모두 포함되어 있습니다.
+
+---
+
+### 1. 테스트 테이블 생성 (CREATE TABLE)
+
+먼저 아래 스크립트를 실행하여 빈 테이블을 생성합니다.
+
+```sql
+-- 기존에 같은 이름의 테이블이 있다면 삭제 (반복 테스트를 위해)
+IF OBJECT_ID('Test_Employee', 'U') IS NOT NULL
+    DROP TABLE Test_Employee;
+GO
+
+-- 직원 테스트 테이블 생성
+CREATE TABLE Test_Employee (
+    EmpID INT IDENTITY(1,1) PRIMARY KEY, -- 직원번호: 1부터 시작해서 1씩 자동 증가 (기본키)
+    EmpName NVARCHAR(50) NOT NULL,       -- 직원이름: 한글 저장을 위해 NVARCHAR 사용 (필수값)
+    Department NVARCHAR(50) NULL,        -- 부서명: 값이 없어도 됨 (NULL 허용)
+    Salary INT NOT NULL,                 -- 연봉: 숫자형 (필수값)
+    HireDate DATETIME DEFAULT GETDATE()  -- 입사일: 값을 안 넣으면 현재 시간이 자동으로 들어감
+);
+GO
+```
+
+**💡 주요 포인트 설명:**
+* **`IDENTITY(1,1)`:** 데이터를 삽입할 때 이 컬럼은 생략합니다. MSSQL이 알아서 1, 2, 3... 순서대로 번호를 부여해 줍니다.
+* **`NVARCHAR`:** 한글 데이터를 깨짐 없이 저장하려면 `VARCHAR` 대신 `NVARCHAR`를 사용하는 것이 좋습니다.
+* **`DEFAULT GETDATE()`:** 입사일을 명시하지 않으면 데이터가 삽입되는 시점의 현재 시간이 자동으로 기록됩니다.
+
+---
+
+### 2. 데이터 삽입 예제 (INSERT)
+
+테이블이 생성되었으니, 다양한 방식으로 데이터를 넣어보겠습니다.
+
+**방법 A: 한 건씩 기본적으로 넣기 (표준 방식)**
+`IDENTITY`가 설정된 `EmpID`는 빼고 나머지 컬럼만 지정하여 넣습니다.
+
+```sql
+INSERT INTO Test_Employee (EmpName, Department, Salary, HireDate)
+VALUES ('홍길동', '개발팀', 50000000, '2023-01-15');
+```
+
+**방법 B: 여러 건을 한 번에 넣기 (실무 추천 방식)**
+`VALUES` 뒤에 쉼표(`,`)를 사용하여 여러 데이터를 한 번의 쿼리로 넣을 수 있습니다. 성능상 훨씬 유리합니다.
+
+```sql
+INSERT INTO Test_Employee (EmpName, Department, Salary, HireDate)
+VALUES 
+    ('김철수', '영업팀', 45000000, '2023-03-01'),
+    ('이영희', '인사팀', 48000000, '2023-06-10'),
+    ('박민수', '기획팀', 52000000, '2024-01-05');
+```
+
+**방법 C: 특정 컬럼을 생략하고 넣기 (NULL 및 DEFAULT 활용)**
+부서명(`Department`)은 NULL을 허용하고, 입사일(`HireDate`)은 기본값이 설정되어 있으므로 두 컬럼을 아예 생략하고 넣을 수 있습니다.
+
+```sql
+INSERT INTO Test_Employee (EmpName, Salary)
+VALUES ('최지우', 40000000);
+```
+*(결과: 최지우의 부서는 NULL이 되고, 입사일은 현재 쿼리를 실행한 시간이 들어갑니다.)*
+
+---
+
+### 3. 입력된 데이터 확인 (SELECT)
+
+데이터가 정상적으로 들어갔는지 확인해 봅니다.
+
+```sql
+SELECT * FROM Test_Employee;
+```
